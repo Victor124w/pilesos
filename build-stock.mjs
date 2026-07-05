@@ -4,6 +4,7 @@
 //
 // env: CF_ACCOUNT_ID, CF_DATABASE_ID, CF_API_TOKEN, BOT_TOKEN, ADMIN_CHAT_ID
 import { d1 } from './d1.mjs';
+import { freezeHeader } from './xlsx-freeze.mjs';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const XLSX = require('xlsx');
@@ -48,7 +49,8 @@ function buildXlsx(rows) {
     ws['!autofilter'] = { ref: 'A1:I1' };
     XLSX.utils.book_append_sheet(wb, ws, sheetName(used, section));
   }
-  return { buf: XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }), sections: bySection.size };
+  const raw = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  return { buf: Buffer.from(freezeHeader(new Uint8Array(raw))), sections: bySection.size };
 }
 
 async function tg(method, body) {
