@@ -109,27 +109,50 @@ async function getPage(slug, page, { delay, log }) {
 
 // Обход одного раздела: страницы качаются пулом по `concurrency`
 // (проверено — сайт держит 3 параллельных потока без троттлинга).
+// Возвращает {items, pages, failed} — failed = страниц, не отдавшихся даже после повтора.
 export async function scrapeRoot(root, opts = {}) {
   const { delay = 150, concurrency = 3, log = null } = opts;
-  const p1 = await getPage(root.slug, 1, { delay, log });
+
+  // Страница 1 критична (по ней считается число страниц) — тянем упорно.
+  let p1 = await getPage(root.slug, 1, { delay, log });
+  for (let i = 0; i < 3 && !p1; i++) {
+    if (log) log(`  ⚠ ${root.slug}: стр 1 не отдалась — повтор…`);
+    await sleep(delay * 5);
+    p1 = await getPage(root.slug, 1, { delay: delay * 2, log });
+  }
   const last = lastPage(p1) || 1;
   const items = parseItems(p1).map(tag(root));
+
   const rest = [];
   for (let p = 2; p <= last; p++) rest.push(p);
   let idx = 0, done = 1;
   const collected = [];
+  const failed = [];
   const worker = async () => {
     while (idx < rest.length) {
       const p = rest[idx++];
       const html = await getPage(root.slug, p, { delay, log });
-      collected.push(...parseItems(html).map(tag(root)));
+      if (!html) failed.push(p);                       // не отдалась после ретраев
+      else collected.push(...parseItems(html).map(tag(root)));
       done++;
       if (log && done % 40 === 0) log(`  ${root.slug}: стр ${done}/${last}`);
       await sleep(delay);
     }
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, rest.length || 1) }, worker));
-  return { items: items.concat(collected), pages: last };
+
+  // Второй проход по выпавшим страницам — медленно, последовательно.
+  let stillFailed = 0;
+  if (failed.length) {
+    if (log) log(`  ⚠ ${root.slug}: ${failed.length} стр не отдались — повтор медленно…`);
+    for (const p of failed) {
+      await sleep(delay * 4);
+      const html = await getPage(root.slug, p, { delay: delay * 2, log });
+      if (html) collected.push(...parseItems(html).map(tag(root)));
+      else stillFailed++;
+    }
+  }
+  return { items: items.concat(collected), pages: last, failed: stillFailed };
 }
 
 const tag = root => it => ({ ...it, top_section: root.slug, section_name: root.name });
@@ -138,13 +161,13 @@ const tag = root => it => ({ ...it, top_section: root.slug, section_name: root.n
 export async function scrapeCatalog(opts = {}) {
   const { roots = ROOTS, delay = 150, concurrency = 3, log = console.error } = opts;
   const byId = new Map();
-  let pages = 0;
+  let pages = 0, failed = 0;
   for (const root of roots) {
     if (log) log(`▶ ${root.slug} …`);
-    const { items, pages: pg } = await scrapeRoot(root, { delay, concurrency, log });
-    pages += pg;
+    const { items, pages: pg, failed: f } = await scrapeRoot(root, { delay, concurrency, log });
+    pages += pg; failed += f;
     for (const it of items) if (!byId.has(it.product_id)) byId.set(it.product_id, it);
-    if (log) log(`  ✓ ${root.slug}: ${pg} стр, +${items.length} (уник всего ${byId.size})`);
+    if (log) log(`  ✓ ${root.slug}: ${pg} стр, +${items.length} (уник всего ${byId.size})${f ? ` ⚠ выпало ${f} стр` : ''}`);
   }
-  return { products: [...byId.values()], pages };
+  return { products: [...byId.values()], pages, failed };
 }

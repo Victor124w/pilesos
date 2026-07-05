@@ -51,5 +51,6 @@ CREATE TABLE IF NOT EXISTS m112_scans (
   changed      INTEGER,             -- сколько остатков изменилось
   sales_qty    INTEGER,             -- суммарно продано за проход
   arrivals_qty INTEGER,             -- суммарно поступило за проход
-  ok           INTEGER DEFAULT 0    -- 1 = проход завершён успешно
+  empty_pages  INTEGER DEFAULT 0,   -- страниц не отдалось даже после повтора (>0 = троттлинг)
+  ok           INTEGER DEFAULT 0    -- 1 = проход без потерь страниц
 );

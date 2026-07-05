@@ -31,8 +31,8 @@ async function main() {
 
   // 2. скрап
   log('▸ скрап каталога …');
-  const { products, pages } = await scrapeCatalog({ roots, delay: 150, concurrency: 3, log });
-  log(`  скачано: ${pages} страниц, ${products.length} уникальных товаров`);
+  const { products, pages, failed } = await scrapeCatalog({ roots, delay: 150, concurrency: 3, log });
+  log(`  скачано: ${pages} страниц, ${products.length} уникальных товаров${failed ? `, ⚠ выпало страниц: ${failed}` : ''}`);
 
   // 3. diff → upsert только изменившихся (иначе 32k×24 превысят лимит записи D1)
   const upserts = [], moves = [];
@@ -80,11 +80,12 @@ async function main() {
   await bulkInsert('m112_products', PROD_COLS, upserts, { conflict });
   if (moves.length) await bulkInsert('m112_moves', MOVE_COLS, moves);
   await d1(`INSERT INTO m112_scans
-    (started_at, finished_at, pages, products, changed, sales_qty, arrivals_qty, ok)
-    VALUES (?,?,?,?,?,?,?,1)`,
-    [ts, Math.floor(Date.now()/1000), pages, products.length, changed, salesQty, arrivalsQty]);
+    (started_at, finished_at, pages, products, changed, sales_qty, arrivals_qty, empty_pages, ok)
+    VALUES (?,?,?,?,?,?,?,?,?)`,
+    [ts, Math.floor(Date.now()/1000), pages, products.length, changed, salesQty, arrivalsQty,
+     failed, failed === 0 ? 1 : 0]);
 
-  log(`✓ готово за ${((Date.now()-t0)/1000|0)}с: товаров ${products.length}, движений ${moves.length}`);
+  log(`✓ готово за ${((Date.now()-t0)/1000|0)}с: товаров ${products.length}, движений ${moves.length}, выпало страниц ${failed}`);
 }
 
 main().catch(e => { log('✗ ОШИБКА:', e.stack || e.message); process.exit(1); });
