@@ -107,32 +107,41 @@ async function getPage(slug, page, { delay, log }) {
   return '';
 }
 
-// Обход одного раздела: все страницы. Возвращает {items, pages}
+// Обход одного раздела: страницы качаются пулом по `concurrency`
+// (проверено — сайт держит 3 параллельных потока без троттлинга).
 export async function scrapeRoot(root, opts = {}) {
-  const { delay = 350, log = null } = opts;
+  const { delay = 150, concurrency = 3, log = null } = opts;
   const p1 = await getPage(root.slug, 1, { delay, log });
   const last = lastPage(p1) || 1;
-  let items = parseItems(p1).map(tag(root));
-  for (let p = 2; p <= last; p++) {
-    await sleep(delay);
-    const html = await getPage(root.slug, p, { delay, log });
-    const parsed = parseItems(html).map(tag(root));
-    items = items.concat(parsed);
-    if (log && p % 20 === 0) log(`  ${root.slug}: стр ${p}/${last}, товаров ${items.length}`);
-  }
-  return { items, pages: last };
+  const items = parseItems(p1).map(tag(root));
+  const rest = [];
+  for (let p = 2; p <= last; p++) rest.push(p);
+  let idx = 0, done = 1;
+  const collected = [];
+  const worker = async () => {
+    while (idx < rest.length) {
+      const p = rest[idx++];
+      const html = await getPage(root.slug, p, { delay, log });
+      collected.push(...parseItems(html).map(tag(root)));
+      done++;
+      if (log && done % 40 === 0) log(`  ${root.slug}: стр ${done}/${last}`);
+      await sleep(delay);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, rest.length || 1) }, worker));
+  return { items: items.concat(collected), pages: last };
 }
 
 const tag = root => it => ({ ...it, top_section: root.slug, section_name: root.name });
 
 // Полный обход каталога с дедупликацией по product_id (первое вхождение выигрывает)
 export async function scrapeCatalog(opts = {}) {
-  const { roots = ROOTS, delay = 350, log = console.error } = opts;
+  const { roots = ROOTS, delay = 150, concurrency = 3, log = console.error } = opts;
   const byId = new Map();
   let pages = 0;
   for (const root of roots) {
     if (log) log(`▶ ${root.slug} …`);
-    const { items, pages: pg } = await scrapeRoot(root, { delay, log });
+    const { items, pages: pg } = await scrapeRoot(root, { delay, concurrency, log });
     pages += pg;
     for (const it of items) if (!byId.has(it.product_id)) byId.set(it.product_id, it);
     if (log) log(`  ✓ ${root.slug}: ${pg} стр, +${items.length} (уник всего ${byId.size})`);

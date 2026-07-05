@@ -31,7 +31,7 @@ async function main() {
 
   // 2. скрап
   log('▸ скрап каталога …');
-  const { products, pages } = await scrapeCatalog({ roots, delay: 350, log });
+  const { products, pages } = await scrapeCatalog({ roots, delay: 150, concurrency: 3, log });
   log(`  скачано: ${pages} страниц, ${products.length} уникальных товаров`);
 
   // 3. diff → upsert только изменившихся (иначе 32k×24 превысят лимит записи D1)
