@@ -30,14 +30,15 @@
    git push -u origin main
    ```
 2. Схема таблиц уже применена к D1. (Если новая база — применить `schema-m112.sql`.)
-3. **Settings → Secrets and variables → Actions → New repository secret**, добавить 5:
-   | Secret | Значение |
+3. **Settings → Secrets and variables → Actions → New repository secret**, добавить 5
+   (реальные значения — в приватном `bot/CONTEXT.md`, НЕ коммитить их сюда):
+   | Secret | Что это |
    |---|---|
-   | `CF_ACCOUNT_ID` | `89d6deb0cde308fc0103c1a91b9508b2` |
-   | `CF_DATABASE_ID` | `5bdaf060-7bb5-4e62-b3c3-b504762dbe29` |
+   | `CF_ACCOUNT_ID` | Cloudflare Account ID |
+   | `CF_DATABASE_ID` | ID базы D1 `prices_db` |
    | `CF_API_TOKEN` | токен Cloudflare с правом **D1:Edit** |
-   | `BOT_TOKEN` | токен бота @Star_ScreamBOT |
-   | `ADMIN_CHAT_ID` | `1726144782` |
+   | `BOT_TOKEN` | токен бота Telegram |
+   | `ADMIN_CHAT_ID` | chat_id админа (куда грузится файл остатков) |
 4. Проверить: вкладка **Actions → m112 hourly scan → Run workflow**. Дальше сам в :05 каждого часа.
 
 > ⚠️ Первый проход = baseline (снимок ~32k товаров, движений нет). Продажи/приходы
@@ -49,6 +50,6 @@ export CF_ACCOUNT_ID=… CF_DATABASE_ID=… CF_API_TOKEN=…
 node run.mjs                     # полный проход, пишет в D1
 node run.mjs --dry               # скрап+diff без записи
 node run.mjs --roots tachskrini  # один раздел (тест)
-export BOT_TOKEN=… ADMIN_CHAT_ID=1726144782
+export BOT_TOKEN=… ADMIN_CHAT_ID=…
 node build-stock.mjs             # пересобрать остатки → file_id в D1
 ```
