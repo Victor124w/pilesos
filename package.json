@@ -1,0 +1,14 @@
+{
+  "name": "pilesos",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Часовой парсер каталога m112.com.ua → диффы продаж/приходов в Cloudflare D1",
+  "scripts": {
+    "scan": "node run.mjs",
+    "stock": "node build-stock.mjs"
+  },
+  "dependencies": {
+    "xlsx": "0.18.5"
+  }
+}

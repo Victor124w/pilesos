@@ -1,0 +1,36 @@
+name: m112 hourly scan
+
+# Часовой парсинг каталога m112.com.ua → диффы (продажи/приходы) в D1 + пред-сборка остатков.
+on:
+  schedule:
+    - cron: '5 * * * *'      # каждый час в :05 UTC (GitHub может задержать под нагрузкой)
+  workflow_dispatch: {}        # ручной запуск из вкладки Actions
+
+concurrency:
+  group: m112-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install --no-audit --no-fund
+      - name: Scan catalog → D1
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: ${{ secrets.CF_DATABASE_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: node run.mjs
+      - name: Build stock xlsx → Telegram file_id → D1
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: ${{ secrets.CF_DATABASE_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
+        run: node build-stock.mjs
