@@ -54,3 +54,13 @@ CREATE TABLE IF NOT EXISTS m112_scans (
   empty_pages  INTEGER DEFAULT 0,   -- страниц не отдалось даже после повтора (>0 = троттлинг)
   ok           INTEGER DEFAULT 0    -- 1 = проход без потерь страниц
 );
+
+-- Реальные снимки остатков (утро/вечер) для кнопки «Разница реал. сканов»
+-- data = JSON {product_id: q_total} всех товаров (компактный блоб, ~350КБ).
+CREATE TABLE IF NOT EXISTS m112_snap (
+  day  TEXT    NOT NULL,   -- YYYY-MM-DD (Киев)
+  kind TEXT    NOT NULL,   -- 'morning' (первый полный скан дня)
+  ts   INTEGER NOT NULL,
+  data TEXT    NOT NULL,
+  PRIMARY KEY (day, kind)
+);
