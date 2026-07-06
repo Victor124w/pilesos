@@ -107,21 +107,25 @@ async function getPage(slug, page, { delay, log }) {
   return '';
 }
 
-// Обход одного раздела: страницы качаются пулом по `concurrency`
-// (проверено — сайт держит 3 параллельных потока без троттлинга).
-// Возвращает {items, pages, failed} — failed = страниц, не отдавшихся даже после повтора.
+// Обход одного раздела: страницы качаются пулом по `concurrency` (по умолч. 2 — мягче к сайту).
+// Возвращает {items, pages, failed, collapsed}: failed = страниц не отдалось после повтора,
+// collapsed = 1 если раздел так и не раскачался (стр1 без товаров — троттлинг/софт-блок).
 export async function scrapeRoot(root, opts = {}) {
-  const { delay = 150, concurrency = 3, log = null } = opts;
+  const { delay = 200, concurrency = 2, log = null } = opts;
 
-  // Страница 1 критична (по ней считается число страниц) — тянем упорно.
-  let p1 = await getPage(root.slug, 1, { delay, log });
-  for (let i = 0; i < 3 && !p1; i++) {
-    if (log) log(`  ⚠ ${root.slug}: стр 1 не отдалась — повтор…`);
-    await sleep(delay * 5);
-    p1 = await getPage(root.slug, 1, { delay: delay * 2, log });
+  // Страница 1 критична. Корневые разделы каталога пустыми НЕ бывают — если товаров 0,
+  // это троттлинг/софт-блок (страница может вернуться непустой, но без товаров): тянем
+  // упорно с растущей паузой, пока не появятся товары.
+  let p1 = '', last = 1, items = [];
+  for (let a = 0; a < 6; a++) {
+    p1 = await getPage(root.slug, 1, { delay, log });
+    items = parseItems(p1).map(tag(root));
+    last = lastPage(p1) || 1;
+    if (items.length > 0) break;
+    if (log) log(`  ⚠ ${root.slug}: стр1 без товаров (троттлинг?) — повтор ${a + 1}/6`);
+    await sleep(delay * (a + 3) * 3);
   }
-  const last = lastPage(p1) || 1;
-  const items = parseItems(p1).map(tag(root));
+  const collapsed = items.length === 0 ? 1 : 0; // раздел так и не раскачался
 
   const rest = [];
   for (let p = 2; p <= last; p++) rest.push(p);
@@ -152,22 +156,39 @@ export async function scrapeRoot(root, opts = {}) {
       else stillFailed++;
     }
   }
-  return { items: items.concat(collected), pages: last, failed: stillFailed };
+  return { items: items.concat(collected), pages: last, failed: stillFailed, collapsed };
 }
 
 const tag = root => it => ({ ...it, top_section: root.slug, section_name: root.name });
 
 // Полный обход каталога с дедупликацией по product_id (первое вхождение выигрывает)
 export async function scrapeCatalog(opts = {}) {
-  const { roots = ROOTS, delay = 150, concurrency = 3, log = console.error } = opts;
+  const { roots = ROOTS, delay = 200, concurrency = 2, log = console.error } = opts;
   const byId = new Map();
   let pages = 0, failed = 0;
+  const collapsedRoots = [];
+  const add = (items) => { for (const it of items) if (!byId.has(it.product_id)) byId.set(it.product_id, it); };
+
   for (const root of roots) {
     if (log) log(`▶ ${root.slug} …`);
-    const { items, pages: pg, failed: f } = await scrapeRoot(root, { delay, concurrency, log });
-    pages += pg; failed += f;
-    for (const it of items) if (!byId.has(it.product_id)) byId.set(it.product_id, it);
-    if (log) log(`  ✓ ${root.slug}: ${pg} стр, +${items.length} (уник всего ${byId.size})${f ? ` ⚠ выпало ${f} стр` : ''}`);
+    const r = await scrapeRoot(root, { delay, concurrency, log });
+    pages += r.pages; failed += r.failed;
+    if (r.collapsed) collapsedRoots.push(root);
+    add(r.items);
+    if (log) log(`  ✓ ${root.slug}: ${r.pages} стр, +${r.items.length} (уник всего ${byId.size})${r.failed ? ` ⚠ выпало ${r.failed}` : ''}${r.collapsed ? ' ⚠ СХЛОПНУЛСЯ' : ''}`);
   }
-  return { products: [...byId.values()], pages, failed };
+
+  // Повтор схлопнувшихся разделов — очень медленно (concurrency 1), чтобы сайт отпустил.
+  let collapsed = 0;
+  for (const root of collapsedRoots) {
+    if (log) log(`↻ повтор схлопнувшегося ${root.slug} медленно…`);
+    await sleep(delay * 15);
+    const r = await scrapeRoot(root, { delay: delay * 3, concurrency: 1, log });
+    pages += r.pages; failed += r.failed;
+    const before = byId.size; add(r.items);
+    if (r.collapsed) collapsed++;
+    if (log) log(`  ↻ ${root.slug}: +${byId.size - before}${r.collapsed ? ' ⚠ ВСЁ ЕЩЁ СХЛОПНУТ' : ' ✓'}`);
+  }
+
+  return { products: [...byId.values()], pages, failed, collapsed };
 }
