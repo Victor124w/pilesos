@@ -14,7 +14,8 @@ const log = (...a) => console.error(...a);
 const PROD_COLS = ['product_id','name','url','top_section','section_name','brand','price',
   'q_dnepr','q_kiev','q_odesa','q_lvov','q_partner','q_total','first_seen','updated_at'];
 const MOVE_COLS = ['ts','product_id','name','top_section','section_name','brand',
-  'qty_before','qty_after','delta','kind','price'];
+  'qty_before','qty_after','delta','kind','price',
+  'd_dnepr','d_kiev','d_odesa','d_lvov','d_partner'];
 
 async function main() {
   const t0 = Date.now();
@@ -24,7 +25,7 @@ async function main() {
   let prev = new Map();
   if (!DRY) {
     log('▸ читаю текущий снимок из D1 …');
-    const rows = await d1('SELECT product_id, q_total, price, first_seen FROM m112_products');
+    const rows = await d1('SELECT product_id, q_dnepr, q_kiev, q_odesa, q_lvov, q_partner, q_total, price, first_seen FROM m112_products');
     for (const r of rows) prev.set(String(r.product_id), r);
     log(`  в базе: ${prev.size} товаров`);
   }
@@ -53,8 +54,11 @@ async function main() {
       const kind = delta < 0 ? 'sale' : 'arrival';
       if (delta < 0) salesQty += -delta; else arrivalsQty += delta;
       changed++;
+      // посклад дельты (для учёта продаж/приходов по каждому складу)
       moves.push([ts, p.product_id, p.name, p.top_section, p.section_name, p.brand,
-        old.q_total, p.q_total, delta, kind, p.price]);
+        old.q_total, p.q_total, delta, kind, p.price,
+        p.q_dnepr - (old.q_dnepr ?? 0), p.q_kiev - (old.q_kiev ?? 0), p.q_odesa - (old.q_odesa ?? 0),
+        p.q_lvov - (old.q_lvov ?? 0), p.q_partner - (old.q_partner ?? 0)]);
     }
     // old отсутствует → новый товар: baseline без движения (first_seen=ts)
   }
