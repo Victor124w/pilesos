@@ -43,8 +43,12 @@ async function main() {
     const firstSeen = old?.first_seen ?? ts;
     const priceChanged = old && old.price !== p.price;
     const qtyChanged = old && old.q_total != null && old.q_total !== p.q_total;
+    // перемещение между складами (сумма та же, но раскладка изменилась) — снимок обновляем,
+    // но движение-продажу НЕ пишем (это не продажа).
+    const whChanged = old && (p.q_dnepr !== old.q_dnepr || p.q_kiev !== old.q_kiev ||
+      p.q_odesa !== old.q_odesa || p.q_lvov !== old.q_lvov || p.q_partner !== old.q_partner);
     if (!old) isNew++;
-    if (!old || qtyChanged || priceChanged) {
+    if (!old || qtyChanged || priceChanged || whChanged) {
       upserts.push([p.product_id, p.name, p.url, p.top_section, p.section_name, p.brand, p.price,
         p.q_dnepr, p.q_kiev, p.q_odesa, p.q_lvov, p.q_partner, p.q_total, firstSeen, ts]);
     }
