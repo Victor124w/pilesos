@@ -1,0 +1,27 @@
+name: m112 svetofor report
+
+# Светофорный отчёт продаж по месяцам/дням (наличие по дням из утренних снимков).
+# Триггерится ботом (кнопка «🚦 Светофор») через workflow_dispatch.
+on:
+  workflow_dispatch:
+    inputs:
+      chat: { description: 'chat_id получателя', required: true }
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install --no-audit --no-fund
+      - name: Build svetofor → Telegram
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: ${{ secrets.CF_DATABASE_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT: ${{ github.event.inputs.chat }}
+        run: node build-svetofor.mjs
