@@ -4,7 +4,12 @@ name: m112 hourly scan
 # Расписание НЕ здесь: планировщик GitHub ненадёжен (тихо роняет плановые запуски).
 # Триггерит Cloudflare-воркер по своему cron (:30, окно 08:30–20:30 Киев) через workflow_dispatch.
 on:
-  workflow_dispatch: {}        # запуск воркером по расписанию, кнопкой в боте или вручную из Actions
+  workflow_dispatch:           # запуск воркером по расписанию, кнопкой в боте или вручную из Actions
+    inputs:
+      manual:                  # 'true' только для кнопки «▶️ Запустить сейчас» → слать уведомление о завершении
+        description: 'Ручной запуск (прислать уведомление о завершении)'
+        required: false
+        default: 'false'
 
 concurrency:
   group: m112-scan
@@ -50,8 +55,8 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
         run: node daily-summary.mjs
-      - name: Notify admin (только для ручного запуска)
-        if: github.event_name == 'workflow_dispatch'
+      - name: Notify admin (только для ручного запуска кнопкой)
+        if: github.event.inputs.manual == 'true'
         env:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_DATABASE_ID: ${{ secrets.CF_DATABASE_ID }}
