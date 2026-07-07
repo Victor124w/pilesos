@@ -65,7 +65,12 @@ async function uploadSnapdiff(buf, filename, meta, { keep = false, caption = '' 
 }
 
 if (kyivHour === 20) {
-  // ВЕЧЕР (после последнего скана): богатый сравнительный отчёт (snapdiff vs почасовой + по складам).
+  // ВЕЧЕР (после последнего скана): сохраняем реальные вечерние остатки постоянным снимком.
+  // m112_products перезапишется завтра утром — поэтому фиксируем вечер в m112_snap (kind='evening').
+  await d1('INSERT OR REPLACE INTO m112_snap (day,kind,ts,data) VALUES (?,?,?,?)', [day, 'evening', now, JSON.stringify(cur)]);
+  console.log(`вечерний снимок сохранён: ${prods.length} товаров`);
+
+  // Богатый сравнительный отчёт (snapdiff vs почасовой + по складам).
   // Активно шлём админу и делаем файлом кнопки «🔄 Разница реал. сканов».
   const { buf, changed, sold, arr, diffs, comps } = await buildComparison({ d1, prods, morning, cur, day });
   const frozen = Buffer.from(freezeHeader(new Uint8Array(buf)));
