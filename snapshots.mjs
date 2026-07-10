@@ -6,6 +6,7 @@
 import { d1 } from './d1.mjs';
 import { freezeHeader } from './xlsx-freeze.mjs';
 import { buildComparison } from './compare-report.mjs';
+import { ADMIN_KEYBOARD } from './admin-keyboard.mjs';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const XLSX = require('xlsx');
@@ -30,7 +31,7 @@ async function sendStockFile(caption) {
   const r = (await d1("SELECT v FROM settings WHERE k='m112_stock_fileid'"))[0];
   if (!r) return;
   const fid = JSON.parse(r.v).file_id;
-  await tg('sendDocument', { chat_id: chat, document: fid, caption });
+  await tg('sendDocument', { chat_id: chat, document: fid, caption, reply_markup: ADMIN_KEYBOARD });
 }
 
 // текущие остатки

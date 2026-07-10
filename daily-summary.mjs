@@ -2,6 +2,7 @@
 // Запускается после каждого скана, но шлёт только когда киевский час = 20.
 // env: CF_ACCOUNT_ID, CF_DATABASE_ID, CF_API_TOKEN, BOT_TOKEN, ADMIN_CHAT_ID
 import { d1 } from './d1.mjs';
+import { ADMIN_KEYBOARD } from './admin-keyboard.mjs';
 
 const chat = process.env.ADMIN_CHAT_ID;
 if (!chat || !process.env.BOT_TOKEN) { console.log('нет CHAT/BOT_TOKEN'); process.exit(0); }
@@ -40,8 +41,9 @@ for (const s of scans)
   t += `${full(s) ? '✅' : '⚠️'} ${hhmm(s.started_at)} ${dur(s).padStart(3)} 🕐 ${String(s.products).padStart(5)} 🛒 ${String(s.sales_qty).padStart(3)} 📦 ${String(s.arrivals_qty).padStart(3)}\n`;
 t += '</pre>';
 
+// reply_markup — это последнее сообщение суток, оно возвращает нижние кнопки при открытии Telegram утром.
 const r = await (await fetch(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ chat_id: chat, text: t, parse_mode: 'HTML' }),
+  body: JSON.stringify({ chat_id: chat, text: t, parse_mode: 'HTML', reply_markup: ADMIN_KEYBOARD }),
 })).json();
 console.log('итог дня:', r.ok ? 'отправлен' : JSON.stringify(r).slice(0, 200));
