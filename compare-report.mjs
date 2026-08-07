@@ -5,6 +5,7 @@
 //   - почасовой: сумма движений из m112_moves (продажи/приходы раздельно, посклад-дельты).
 // Расхождения объяснимы: компенсации (нетто скрывает оборот) и граница утреннего снимка.
 import { createRequire } from 'module';
+import { freezePane } from './xlsx-freeze.mjs';
 const require = createRequire(import.meta.url);
 const XLSX = require('xlsx-js-style');
 
@@ -208,6 +209,11 @@ export async function buildComparison({ d1, prods, morning, cur, day }) {
   ws4['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:5} }, { s:{r:1,c:0}, e:{r:1,c:5} }, { s:{r:A4.length-2,c:0}, e:{r:A4.length-2,c:5} }, { s:{r:A4.length-1,c:0}, e:{r:A4.length-1,c:5} }];
   XLSX.utils.book_append_sheet(wb, ws4, 'По складам');
 
-  const buf = Buffer.from(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
+  // Заморозка по листам — шапки у них на разной высоте (порядок = порядок book_append_sheet):
+  //   «Сводка» — не таблица, а короткая панель блоков, морозить нечего → 0;
+  //   «Разница реал.сканов» и «Сверка методов» — шапка первой строкой → 1;
+  //   «По складам» — титул + пояснение + пустая, шапка четвёртой → 4.
+  const raw = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  const buf = Buffer.from(freezePane(new Uint8Array(raw), 0, [0, 1, 1, 4]));
   return { buf, changed: snapRows.length, sold: snapSold, arr: snapArr, diffs: diffs.length, comps: comps.length };
 }

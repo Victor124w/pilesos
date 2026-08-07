@@ -74,7 +74,9 @@ if (kyivHour === 20) {
   // Богатый сравнительный отчёт (snapdiff vs почасовой + по складам).
   // Активно шлём админу и делаем файлом кнопки «🔄 Разница реал. сканов».
   const { buf, changed, sold, arr, diffs, comps } = await buildComparison({ d1, prods, morning, cur, day });
-  const frozen = Buffer.from(freezeHeader(new Uint8Array(buf)));
+  // Заморозку тут НЕ навешиваем: compare-report.mjs делает её сам и по-разному на каждый лист
+  // (у них шапки на разной высоте). Второй проход только испортил бы «Сводку».
+  const frozen = buf;
   const caption = `🔄 Разница реал. сканов за ${day}: утро → последний скан\n`
     + `изменилось ${changed} · 🛒 продано ${sold} · 📦 поступило ${arr}\n`
     + `✅ сверка с почасовым: ⚠️ расхождений ${diffs} · ℹ️ компенсаций ${comps} — детали и разбивка по складам в файле`;
