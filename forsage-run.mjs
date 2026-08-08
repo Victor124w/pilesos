@@ -54,8 +54,11 @@ async function main() {
     if (!old) { isNew++; upserts.push(row(it, firstSeen)); continue; }
 
     // Сравниваем по ДОЛЛАРУ — см. комментарий к `same` выше.
-    const dRetail = !same(old.price_retail_usd, it.retailUsd);
-    const dPartner = !same(old.price_partner_usd, it.partnerUsd);
+    // ⚠️ Переход NULL → значение изменением НЕ считаем, это базовая линия. Иначе любая
+    // миграция, добавившая колонку, порождает по записи на КАЖДЫЙ товар: на добавлении
+    // долларовых цен 08.08 так и вышло — 86 154 ложных «изменения» за один прогон.
+    const dRetail = old.price_retail_usd != null && !same(old.price_retail_usd, it.retailUsd);
+    const dPartner = old.price_partner_usd != null && !same(old.price_partner_usd, it.partnerUsd);
     const dStock = (old.in_stock ? 1 : 0) !== it.inStock;
 
     if (dRetail) changes.push([ts, it.code, it.name, it.category, 'retail', old.price_retail_usd, it.retailUsd]);
