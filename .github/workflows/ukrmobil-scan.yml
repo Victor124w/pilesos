@@ -1,0 +1,51 @@
+name: ukrmobil scan
+
+# Парсинг каталога ukr-mobil.com → диффы (продажи/приходы) в D1 + пред-сборка остатков.
+# Расписание НЕ здесь, как и у m112/ekran/kspace: планировщик GitHub тихо роняет плановые
+# запуски. Триггерит Cloudflare-воркер своим cron через workflow_dispatch.
+#
+# ⚠️ Проход дороже остальных: остаток лежит только в карточке, значит 1 запрос на товар,
+# 1702 карточки. Локальный замер 2026-08-08 — 7.6 мин при 15 потоках; на раннере GitHub
+# латентность до Vercel/Odoo другая, поэтому таймаут с запасом.
+on:
+  workflow_dispatch:
+    inputs:
+      manual:
+        description: 'Ручной запуск (прислать уведомление о завершении)'
+        required: false
+        default: 'false'
+
+concurrency:
+  group: ukrmobil-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install --no-audit --no-fund
+      - name: Scan catalog → D1
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: ${{ secrets.CF_DATABASE_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: node ukrmobil-run.mjs
+      - name: Build stock xlsx → Telegram file_id → D1
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: ${{ secrets.CF_DATABASE_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
+        run: node ukrmobil-build-stock.mjs
+      - name: Snapshots (утро/вечер)
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: ${{ secrets.CF_DATABASE_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: node ukrmobil-snapshots.mjs
