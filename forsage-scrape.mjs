@@ -80,14 +80,20 @@ export async function logout(token) {
 const ES_LIMIT = 10000;
 const START_EDGES = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 2, 3, 5, 8, 12, 20, 35, 60, 100, 200, 500, 1e6];
 
-export async function buildPriceBuckets(log = () => {}) {
+/**
+ * ⚠️ Считать границы НАДО ПОД ТЕМ ЖЕ ТОКЕНОМ, что и выборку. Первый боевой прогон 08.08
+ * это доказал: границы считались анонимно (по РОЗНИЧНЫМ ценам), а товары тянулись под
+ * токеном (по ПАРТНЁРСКИМ, они ниже). Товары «переехали» в нижние диапазоны, счётчики
+ * страниц разошлись с реальностью — собралось 40 942 вместо 43 076, потеряли 5%.
+ */
+export async function buildPriceBuckets(token, log = () => {}) {
   const out = [];
   const queue = [];
   for (let i = 0; i < START_EDGES.length - 1; i++) queue.push([START_EDGES[i], START_EDGES[i + 1]]);
 
   while (queue.length) {
     const [from, to] = queue.shift();
-    const j = await gql(`{products(filter:{price:{from:"${from}",to:"${to}"}},pageSize:1){total_count}}`, null);
+    const j = await gql(`{products(filter:{price:{from:"${from}",to:"${to}"}},pageSize:1){total_count}}`, token);
     const n = j?.data?.products?.total_count ?? 0;
     if (!n) continue;
     if (n >= ES_LIMIT && to - from > 0.005) {
@@ -127,8 +133,12 @@ function pickCategory(cats) {
  */
 async function fetchBucket(b, token, onFail) {
   const out = [];
-  const pages = Math.max(1, Math.ceil(b.count / PAGE));
-  for (let p = 1; p <= pages; p++) {
+  // ⚠️ Идём ДО КОНЦА выдачи, а не по расчётному числу страниц. Расчёт по `count` — только
+  // ориентир: если он занижен (цены сдвинулись между подсчётом и обходом), по нему мы
+  // остановились бы раньше и молча потеряли товары. Признак конца — короткая страница.
+  // Потолок MAX_PAGES = лимит Elasticsearch 10000 / 50, дальше сервер всё равно не отдаст.
+  const MAX_PAGES = ES_LIMIT / PAGE;
+  for (let p = 1; p <= MAX_PAGES; p++) {
     let j;
     try {
       j = await gql(`{products(filter:{price:{from:"${b.from}",to:"${b.to}"}},pageSize:${PAGE},currentPage:${p}){items{${PRODUCT_FIELDS}}}}`, token);
@@ -166,7 +176,7 @@ export async function scrapeForsage({ log = () => {}, conc = CONC, limitCats = 0
   }
 
   log('▸ нарезаю каталог по диапазонам цены …');
-  let cats = await buildPriceBuckets(log);
+  let cats = await buildPriceBuckets(token, log);
   log(`  диапазонов: ${cats.length}, сумма товаров по ним ${cats.reduce((s, c) => s + c.count, 0)}`);
   if (limitCats) cats = cats.slice(0, limitCats);
 
