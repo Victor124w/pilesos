@@ -22,7 +22,15 @@ const HOST = 'https://gsm-forsage.com.ua';
 const GQL = HOST + '/graphql';
 
 // ⚠️ Accept-Language обязателен: без него GraphQL отдаёт английские названия.
-const BASE_H = { 'User-Agent': UA, 'Accept-Language': 'uk,ru;q=0.9', 'Content-Type': 'application/json' };
+//
+// ⚠️ Content-Currency: USD — тянем цены в ДОЛЛАРАХ. Базовая валюта магазина именно USD
+// (`currency.base_currency_code`), а гривна витринная: 23.5 $ × 45.2 = 1062.20 грн ровно.
+// Без этого заголовка GraphQL отдаёт гривну, и доллар пришлось бы делить обратно, теряя
+// точность. Плюс фильтр `price` и так считает в базовой валюте — теперь всё в одних единицах.
+const BASE_H = {
+  'User-Agent': UA, 'Accept-Language': 'uk,ru;q=0.9', 'Content-Type': 'application/json',
+  'Content-Currency': 'USD',
+};
 
 export const PAGE = 50;   // потолок сервера, больше не отдаёт
 export const CONC = 4;
@@ -150,8 +158,9 @@ async function fetchBucket(b, token, onFail) {
         code: String(it.sku || '').trim(),
         name: it.name || '',
         category: pickCategory(it.categories),
-        priceRetail: num(mp?.regular_price?.value),
-        pricePartner: num(mp?.final_price?.value),
+        // Пришли ДОЛЛАРЫ (Content-Currency: USD). Гривну добавит scrapeForsage по курсу.
+        retailUsd: num(mp?.regular_price?.value),
+        partnerUsd: num(mp?.final_price?.value),
         inStock: it.stock_status === 'IN_STOCK' ? 1 : 0,
       });
     }
@@ -161,6 +170,23 @@ async function fetchBucket(b, token, onFail) {
 }
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+/**
+ * Курс гривны к доллару — из самого GraphQL, а не из шапки сайта.
+ * Гривневые цены считаем как `usd * rate`: так они всегда согласованы с долларовыми,
+ * а при смене курса пересчитаются сами.
+ */
+export async function fetchUahRate() {
+  const j = await gql('{currency{base_currency_code exchange_rates{currency_to rate}}}', null);
+  const c = j?.data?.currency;
+  const uah = (c?.exchange_rates || []).find((r) => r.currency_to === 'UAH');
+  if (c?.base_currency_code !== 'USD') {
+    // Если магазин когда-нибудь сменит базовую валюту, молча пересчитывать нельзя.
+    throw new Error(`базовая валюта магазина стала ${c?.base_currency_code}, а не USD — проверь логику цен`);
+  }
+  if (!uah?.rate) throw new Error('курс UAH не отдан GraphQL');
+  return uah.rate;
+}
 
 /** Полный проход каталога. Без email/password идёт анонимно — тогда партнёрских цен НЕТ. */
 export async function scrapeForsage({ log = () => {}, conc = CONC, limitCats = 0 } = {}) {
@@ -174,6 +200,9 @@ export async function scrapeForsage({ log = () => {}, conc = CONC, limitCats = 0
   } else {
     log('⚠️ FORSAGE_EMAIL / FORSAGE_PASSWORD не заданы — проход АНОНИМНЫЙ, партнёрских цен не будет');
   }
+
+  const rate = await fetchUahRate();
+  log(`▸ курс: 1 $ = ${rate} грн (из GraphQL, не из шапки сайта)`);
 
   log('▸ нарезаю каталог по диапазонам цены …');
   let cats = await buildPriceBuckets(token, log);
@@ -198,9 +227,14 @@ export async function scrapeForsage({ log = () => {}, conc = CONC, limitCats = 0
 
   if (token) await logout(token);
 
-  const items = [...byCode.values()];
+  // Гривну считаем из доллара по курсу магазина — так обе цены всегда согласованы.
+  const uah = (v) => (v == null ? null : Math.round(v * rate * 100) / 100);
+  const items = [...byCode.values()].map((i) => ({
+    ...i, priceRetail: uah(i.retailUsd), pricePartner: uah(i.partnerUsd),
+  }));
+
   // Проверка гипотезы про regular/final: если под токеном они всюду равны — партнёрских цен нет.
-  const withGap = items.filter((i) => i.priceRetail != null && i.pricePartner != null && i.pricePartner < i.priceRetail).length;
+  const withGap = items.filter((i) => i.retailUsd != null && i.partnerUsd != null && i.partnerUsd < i.retailUsd).length;
   const authed = token ? 1 : 0;
   if (token && withGap < items.length * 0.05) {
     log(`⚠️ ВНИМАНИЕ: под токеном партнёрская цена ниже розничной лишь у ${withGap} из ${items.length}.`);
@@ -211,5 +245,5 @@ export async function scrapeForsage({ log = () => {}, conc = CONC, limitCats = 0
   if (failures) log(`  ⚠️ запросов не удалось: ${failures}`);
   log(`  готово: ${items.length} товаров, ${cats.length} диапазонов, ~${requests} запросов за ${sec}с`);
 
-  return { items, cats: cats.length, requests, failures, authed, withGap, sec };
+  return { items, cats: cats.length, requests, failures, authed, withGap, sec, rate };
 }

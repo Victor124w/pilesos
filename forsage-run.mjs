@@ -18,10 +18,14 @@ const DRY = process.argv.includes('--dry');
 const CATS = arg('--cats', 0);
 const log = (...a) => console.error(...a);
 
-const PROD_COLS = ['code', 'name', 'category', 'price_retail', 'price_partner', 'in_stock', 'first_seen', 'updated_at'];
+const PROD_COLS = ['code', 'name', 'category', 'price_retail', 'price_partner',
+  'price_retail_usd', 'price_partner_usd', 'in_stock', 'first_seen', 'updated_at'];
 const CHG_COLS = ['ts', 'code', 'name', 'category', 'field', 'old_val', 'new_val'];
 
-// Цены сравниваем с округлением до копейки: float из JSON иначе даёт ложные «изменения».
+// ⚠️ Цены в `forsage_changes` — в ДОЛЛАРАХ: доллар у магазина базовый, гривна считается
+// по курсу, и при его изменении все гривневые цены сдвинулись бы разом, породив 43 тысячи
+// ложных «изменений». По доллару такого не бывает.
+// Сравниваем с допуском в цент: float из JSON иначе даёт ложные срабатывания.
 const same = (a, b) => (a == null && b == null) || (a != null && b != null && Math.abs(a - b) < 0.005);
 
 async function main() {
@@ -31,35 +35,37 @@ async function main() {
   const prev = new Map();
   if (!DRY) {
     log('▸ читаю текущий снимок из D1 …');
-    const rows = await d1('SELECT code, price_retail, price_partner, in_stock, first_seen FROM forsage_products');
+    const rows = await d1('SELECT code, price_retail_usd, price_partner_usd, in_stock, first_seen FROM forsage_products');
     for (const r of rows) prev.set(String(r.code), r);
     log(`  в базе: ${prev.size} товаров`);
   }
 
-  const { items, cats, requests, failures, authed, withGap, sec } =
+  const { items, cats, requests, failures, authed, withGap, sec, rate } =
     await scrapeForsage({ log, limitCats: CATS });
+
+  const row = (it, firstSeen) => [it.code, it.name, it.category, it.priceRetail, it.pricePartner,
+    it.retailUsd, it.partnerUsd, it.inStock, firstSeen, ts];
 
   const upserts = [], changes = [];
   let isNew = 0, up = 0, down = 0, stockChg = 0;
   for (const it of items) {
     const old = prev.get(it.code);
     const firstSeen = old?.first_seen ?? ts;
-    if (!old) { isNew++; upserts.push([it.code, it.name, it.category, it.priceRetail, it.pricePartner, it.inStock, firstSeen, ts]); continue; }
+    if (!old) { isNew++; upserts.push(row(it, firstSeen)); continue; }
 
-    const dRetail = !same(old.price_retail, it.priceRetail);
-    const dPartner = !same(old.price_partner, it.pricePartner);
+    // Сравниваем по ДОЛЛАРУ — см. комментарий к `same` выше.
+    const dRetail = !same(old.price_retail_usd, it.retailUsd);
+    const dPartner = !same(old.price_partner_usd, it.partnerUsd);
     const dStock = (old.in_stock ? 1 : 0) !== it.inStock;
 
-    if (dRetail) changes.push([ts, it.code, it.name, it.category, 'retail', old.price_retail, it.priceRetail]);
+    if (dRetail) changes.push([ts, it.code, it.name, it.category, 'retail', old.price_retail_usd, it.retailUsd]);
     if (dPartner) {
-      changes.push([ts, it.code, it.name, it.category, 'partner', old.price_partner, it.pricePartner]);
-      if (old.price_partner != null && it.pricePartner != null) (it.pricePartner > old.price_partner ? up++ : down++);
+      changes.push([ts, it.code, it.name, it.category, 'partner', old.price_partner_usd, it.partnerUsd]);
+      if (old.price_partner_usd != null && it.partnerUsd != null) (it.partnerUsd > old.price_partner_usd ? up++ : down++);
     }
     if (dStock) { changes.push([ts, it.code, it.name, it.category, 'stock', old.in_stock ? 1 : 0, it.inStock]); stockChg++; }
 
-    if (dRetail || dPartner || dStock) {
-      upserts.push([it.code, it.name, it.category, it.priceRetail, it.pricePartner, it.inStock, firstSeen, ts]);
-    }
+    if (dRetail || dPartner || dStock) upserts.push(row(it, firstSeen));
   }
 
   // Коды, которых не встретилось. Строки НЕ трогаем: товар мог не попасть в неполный проход,
@@ -75,6 +81,8 @@ async function main() {
     const gapPct = items.length ? (withGap / items.length * 100).toFixed(1) : '0';
     log(`   товаров ${items.length}, в наличии ${inStock}, категорий ${cats}, запросов ~${requests}, сбоев ${failures}, за ${sec}с`);
     log(`   под токеном: ${authed ? 'ДА' : 'нет (анонимно)'}; партнёрская ниже розничной у ${withGap} (${gapPct}%)`);
+    log(`   курс 1 $ = ${rate} грн`);
+    for (const i of items.slice(0, 4)) log(`   ${i.code.padEnd(13)} ${String(i.partnerUsd).padStart(8)} $ = ${String(i.pricePartner).padStart(9)} грн  ${i.name.slice(0, 40)}`);
     for (const c of changes.slice(0, 10)) log(`   ${c[4]}: ${c[5]} → ${c[6]}  ${String(c[2]).slice(0, 50)}`);
     return;
   }
@@ -83,6 +91,7 @@ async function main() {
   const conflict = `ON CONFLICT(code) DO UPDATE SET
     name=excluded.name, category=excluded.category,
     price_retail=excluded.price_retail, price_partner=excluded.price_partner,
+    price_retail_usd=excluded.price_retail_usd, price_partner_usd=excluded.price_partner_usd,
     in_stock=excluded.in_stock, updated_at=excluded.updated_at`;
   await bulkInsert('forsage_products', PROD_COLS, upserts, { conflict });
   if (changes.length) await bulkInsert('forsage_changes', CHG_COLS, changes);

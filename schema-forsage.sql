@@ -17,8 +17,14 @@ CREATE TABLE IF NOT EXISTS forsage_products (
   code          TEXT PRIMARY KEY,   -- sku Magento, «CB-00000323» / «00-00002506»
   name          TEXT NOT NULL,
   category      TEXT,               -- имя категории-листа, где товар встретился первым
-  price_retail  REAL,               -- грн, розничная (regular_price)
-  price_partner REAL,               -- грн, партнёрская = цена кабинета (final_price под токеном)
+  -- ⚠️ ДОЛЛАР ПЕРВИЧЕН: базовая валюта магазина — USD (`currency.base_currency_code`),
+  -- гривна витринная и считается по курсу (45.2 на 08.08): 23.5 $ × 45.2 = 1062.20 грн ровно.
+  -- Скрап идёт с заголовком `Content-Currency: USD`, гривна вычисляется в парсере.
+  -- Владелец сравнивает с нашей номенклатурой в $ (iCracked_SKU кол. K), поэтому доллар нужен.
+  price_retail_usd  REAL,           -- $, розничная
+  price_partner_usd REAL,           -- $, партнёрская = цена кабинета
+  price_retail  REAL,               -- грн, = price_retail_usd × курс
+  price_partner REAL,               -- грн, = price_partner_usd × курс
   in_stock      INTEGER NOT NULL DEFAULT 0,  -- 1 = IN_STOCK, 0 = OUT_OF_STOCK (общее по сайту)
   -- ⚠️ Заведена ЗАРАНЕЕ и пока НЕ заполняется. Наличие по 10 складам (Чернівці ×3,
   -- Івано-Франківськ, Кам'янець, Коломия, Київ Правий/Лівий, Львів, Тернопіль, Термінал)
@@ -41,6 +47,8 @@ CREATE TABLE IF NOT EXISTS forsage_changes (
   name      TEXT,                   -- денормализовано: отчёты строятся без join
   category  TEXT,
   field     TEXT NOT NULL,          -- 'retail' | 'partner' | 'stock'
+  -- ⚠️ Цены здесь в ДОЛЛАРАХ. Гривну писать нельзя: при смене курса все гривневые цены
+  -- сдвинулись бы разом и дали 43 тысячи ложных «изменений». В долларе такого не бывает.
   old_val   REAL,
   new_val   REAL
 );
