@@ -1,0 +1,39 @@
+name: forsage prices
+
+# Ежечасный снимок цен gsm-forsage.com.ua (розничная + партнёрская) и наличия «є/немає».
+# Расписание НЕ здесь, как и у остальных парсеров: планировщик GitHub тихо роняет запуски.
+# Триггерит Cloudflare-воркер своим ЧАСОВЫМ cron (`0 * * * *`) через workflow_dispatch.
+#
+# ⚠️ Проход идёт ПОД ЛОГИНОМ дилерского кабинета — иначе партнёрских цен не будет.
+# Учётка лежит в Actions Secrets (FORSAGE_EMAIL / FORSAGE_PASSWORD), в коде её нет.
+# Токен берётся на проход и отзывается в конце (`revokeCustomerToken`).
+on:
+  workflow_dispatch:
+    inputs:
+      manual:
+        description: 'Ручной запуск'
+        required: false
+        default: 'false'
+
+concurrency:
+  group: forsage-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install --no-audit --no-fund
+      - name: Scan prices → D1
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: ${{ secrets.CF_DATABASE_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          FORSAGE_EMAIL: ${{ secrets.FORSAGE_EMAIL }}
+          FORSAGE_PASSWORD: ${{ secrets.FORSAGE_PASSWORD }}
+        run: node forsage-run.mjs
