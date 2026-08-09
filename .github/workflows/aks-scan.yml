@@ -1,0 +1,40 @@
+name: aks prices
+
+# Недельный снимок цен и наличия раздела запчастей aks.ua (52 тыс. товаров, 42 категории).
+# Расписание НЕ здесь, как и у остальных парсеров: планировщик GitHub тихо роняет запуски.
+# Триггерит Cloudflare-воркер своим НЕДЕЛЬНЫМ cron `0 2 * * 1` (пн 05:00 Київ) через
+# workflow_dispatch.
+#
+# ⚠️ Почему раз в неделю, а не раз в 2 часа, как остальные конкуренты: сайт не отдаёт
+# сжатие вовсе, полный проход — ~1700 страниц и ~625 МБ. Каждые 2 часа это 7.5 ГБ в сутки
+# с чужого сервера. Решение владельца 2026-08-09.
+# Количеств сайт не даёт, так что продажи по нему всё равно не считаются — недельного
+# среза цен достаточно.
+on:
+  workflow_dispatch:
+    inputs:
+      manual:
+        description: 'Ручной запуск'
+        required: false
+        default: 'false'
+
+concurrency:
+  group: aks-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install --no-audit --no-fund
+      - name: Scan prices → D1
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: ${{ secrets.CF_DATABASE_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: node aks-run.mjs
