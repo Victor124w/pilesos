@@ -1,0 +1,36 @@
+name: uparts prices
+
+# Снимок цен и наличия uparts.ua (розничная цена + «є/немає», количеств сайт не даёт).
+# Расписание НЕ здесь, как и у остальных парсеров: планировщик GitHub тихо роняет запуски.
+# Триггерит Cloudflare-воркер своим cron `30 5-17/2 * * *` (раз в 2 часа) через workflow_dispatch,
+# пятым в том же `Promise.allSettled`, что m112 / ekran / kspace / ukrmobil.
+#
+# Проход самый быстрый из всех парсеров: 467 страниц, ~30 с, логина и секретов сайта не нужно.
+on:
+  workflow_dispatch:
+    inputs:
+      manual:
+        description: 'Ручной запуск'
+        required: false
+        default: 'false'
+
+concurrency:
+  group: uparts-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install --no-audit --no-fund
+      - name: Scan prices → D1
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: ${{ secrets.CF_DATABASE_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: node uparts-run.mjs
