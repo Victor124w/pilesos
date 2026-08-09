@@ -100,10 +100,20 @@ export function parseListing(html, category) {
 
 /** Одна страница с ретраями. «Пусто» и «сбой» различаются — см. комментарий в scrapeAks. */
 async function fetchPage(cat, n, tries = 3) {
-  const url = n === 1 ? `${BASE}${cat}/` : `${BASE}${cat}/page/${n}/`;
+  // ⚠️ У страниц пагинации концевого слэша быть НЕ должно: `/page/2/` отдаёт 301 на
+  // `/page/2`, то есть каждый запрос стоил бы двух. Сайт и сам ссылается без слэша
+  // (`href="/uk/catalog/displei-ekrany/page/2"`). У первой страницы слэш нужен.
+  const url = n === 1 ? `${BASE}${cat}/` : `${BASE}${cat}/page/${n}`;
   for (let a = 1; a <= tries; a++) {
     try {
-      const r = await fetch(url, { headers: { 'User-Agent': UA, 'Accept-Language': 'uk' } });
+      const r = await fetch(url, {
+        headers: {
+          'User-Agent': UA,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'uk-UA,uk;q=0.9,ru;q=0.8,en;q=0.7',
+          'Referer': 'https://www.aks.ua/',
+        },
+      });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const html = await r.text();
       const { items, lastPage } = parseListing(html, cat);
