@@ -56,6 +56,23 @@ CREATE INDEX IF NOT EXISTS idx_forsage_changes_ts    ON forsage_changes (ts);
 CREATE INDEX IF NOT EXISTS idx_forsage_changes_code  ON forsage_changes (code);
 CREATE INDEX IF NOT EXISTS idx_forsage_changes_field ON forsage_changes (field, ts);
 
+-- Пропавшие коды: те, что есть в `forsage_products`, но не встретились в проходе.
+-- ⚠️ Разовое отсутствие ничего не значит — Magento сам отдаёт то полный каталог, то на сотню
+-- позиций меньше при нулевых сбоях запросов (10.08: 0 → 853 → 1 за соседние часы). Смысл
+-- имеет только СЕРИЯ: строка живёт, пока код отсутствует, встретился снова — удаляется.
+-- Почему не `last_seen` в `forsage_products`: «видели» на каждый товар в каждом проходе —
+-- это 43 000 записей в час вместо нынешних десятков. Пишем пропавших, их единицы-сотни.
+-- Отдельным файлом эта же таблица лежит в migrate-forsage-missing.sql (применена 2026-08-10).
+CREATE TABLE IF NOT EXISTS forsage_missing (
+  code           TEXT PRIMARY KEY,
+  name           TEXT,                  -- денормализовано: отчёты строятся без join
+  category       TEXT,
+  first_missing  INTEGER NOT NULL,      -- начало ТЕКУЩЕЙ серии отсутствия
+  last_missing   INTEGER NOT NULL,
+  misses         INTEGER NOT NULL DEFAULT 1  -- проходов подряд без него
+);
+CREATE INDEX IF NOT EXISTS idx_forsage_missing_misses ON forsage_missing (misses);
+
 -- Лог проходов парсера (кнопка «📡 Статус парсинга»).
 CREATE TABLE IF NOT EXISTS forsage_scans (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,

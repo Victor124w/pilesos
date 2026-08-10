@@ -28,6 +28,40 @@ const CHG_COLS = ['ts', 'code', 'name', 'category', 'field', 'old_val', 'new_val
 // Сравниваем с допуском в цент: float из JSON иначе даёт ложные срабатывания.
 const same = (a, b) => (a == null && b == null) || (a != null && b != null && Math.abs(a - b) < 0.005);
 
+const MISS_COLS = ['code', 'name', 'category', 'first_missing', 'last_missing', 'misses'];
+
+// Ведёт `forsage_missing` — список кодов, которых нет в выдаче, со счётчиком проходов подряд.
+//
+// ⚠️ Смысл именно в СЕРИИ, а не в разовом факте: 10.08 счётчик пропавших гулял 0 → 853 → 1
+// за соседние часы при НУЛЕВЫХ сбоях запросов — Magento сам отдаёт то полный каталог, то
+// на сотню позиций меньше. Один пропуск = шум выдачи, двенадцать подряд = снят с продажи.
+//
+// Пишем пропавших, а не увиденных: `last_seen` на каждый товар стоил бы 43 000 записей
+// в час (>1 млн в сутки) вместо нынешних десятков — см. лимит записи D1 в CONTEXT.md.
+//
+// DELETE здесь безопасен: таблица служебная, товарных данных в ней нет, `forsage_products`
+// не трогается. Возврат кода в выдачу обрывает серию — строка удаляется целиком, чтобы
+// следующее исчезновение считалось с нуля.
+async function trackMissing(codes, prev, seen, ts) {
+  const known = (await d1('SELECT code FROM forsage_missing')).map((r) => String(r.code));
+  const back = known.filter((c) => seen.has(c));
+  for (let i = 0; i < back.length; i += 150) {
+    const inList = back.slice(i, i + 150).map((c) => "'" + c.replace(/'/g, "''") + "'").join(',');
+    await d1(`DELETE FROM forsage_missing WHERE code IN (${inList})`);
+  }
+  const rows = codes.map((c) => {
+    const p = prev.get(c);
+    return [c, p?.name ?? null, p?.category ?? null, ts, ts, 1];
+  });
+  // first_missing НЕ обновляем — это начало серии; misses растёт от значения в базе.
+  await bulkInsert('forsage_missing', MISS_COLS, rows, {
+    conflict: `ON CONFLICT(code) DO UPDATE SET
+      name=excluded.name, category=excluded.category,
+      last_missing=excluded.last_missing, misses=forsage_missing.misses+1`,
+  });
+  return back.length;
+}
+
 async function main() {
   const t0 = Date.now();
   const ts = Math.floor(t0 / 1000);
@@ -35,7 +69,9 @@ async function main() {
   const prev = new Map();
   if (!DRY) {
     log('▸ читаю текущий снимок из D1 …');
-    const rows = await d1('SELECT code, price_retail_usd, price_partner_usd, in_stock, first_seen FROM forsage_products');
+    // name/category читаются ради `forsage_missing`: у пропавшего кода в выдаче их взять уже
+    // неоткуда, а таблица денормализована, чтобы отчёты строились без join.
+    const rows = await d1('SELECT code, name, category, price_retail_usd, price_partner_usd, in_stock, first_seen FROM forsage_products');
     for (const r of rows) prev.set(String(r.code), r);
     log(`  в базе: ${prev.size} товаров`);
   }
@@ -72,9 +108,11 @@ async function main() {
   }
 
   // Коды, которых не встретилось. Строки НЕ трогаем: товар мог не попасть в неполный проход,
-  // а стереть цену — значит записать ложное изменение. Число уходит в лог прохода.
+  // а стереть цену — значит записать ложное изменение. Число уходит в лог прохода,
+  // сами коды — в `forsage_missing` (см. trackMissing).
   const seen = new Set(items.map((i) => i.code));
-  const missing = [...prev.keys()].filter((c) => !seen.has(c)).length;
+  const missingCodes = [...prev.keys()].filter((c) => !seen.has(c));
+  const missing = missingCodes.length;
 
   log(`▸ diff: новых ${isNew} | изменений ${changes.length} (цена вверх ${up}, вниз ${down}, наличие ${stockChg}) | пропало из выдачи ${missing}`);
 
@@ -98,6 +136,9 @@ async function main() {
     in_stock=excluded.in_stock, updated_at=excluded.updated_at`;
   await bulkInsert('forsage_products', PROD_COLS, upserts, { conflict });
   if (changes.length) await bulkInsert('forsage_changes', CHG_COLS, changes);
+
+  const back = await trackMissing(missingCodes, prev, seen, ts);
+  log(`▸ пропавшие: серия продолжилась/началась у ${missing}, вернулось ${back}`);
 
   await d1(`INSERT INTO forsage_scans
     (started_at, finished_at, requests, cats, products, changed, price_up, price_down, failures, missing, authed, ok)
