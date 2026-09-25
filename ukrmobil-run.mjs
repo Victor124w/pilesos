@@ -6,6 +6,7 @@
 //         node ukrmobil-run.mjs --dry --limit 60 --conc 10   (быстрая проба)
 import { scrapeUkrmobil, CONC } from './ukrmobil-scrape.mjs';
 import { d1, bulkInsert } from './d1.mjs';
+import { withSiteRetry } from './site-retry.mjs';
 
 const arg = (name, def) => {
   const i = process.argv.indexOf(name);
@@ -36,7 +37,7 @@ async function main() {
 
   // 2. скрап
   const { items, requests, failures, empty, rebuilds, multi, sec } =
-    await scrapeUkrmobil({ log, conc: CONCURRENCY, limit: LIMIT });
+    await withSiteRetry(() => scrapeUkrmobil({ log, conc: CONCURRENCY, limit: LIMIT }), log);
 
   // 3. diff — пишем ТОЛЬКО изменившихся (иначе упрёмся в лимит записи D1 100k/сутки)
   const upserts = [], moves = [];

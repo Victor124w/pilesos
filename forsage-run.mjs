@@ -12,6 +12,7 @@
 // env: CF_ACCOUNT_ID, CF_DATABASE_ID, CF_API_TOKEN + FORSAGE_EMAIL, FORSAGE_PASSWORD
 import { scrapeForsage } from './forsage-scrape.mjs';
 import { d1, bulkInsert } from './d1.mjs';
+import { withSiteRetry } from './site-retry.mjs';
 
 const arg = (n, def) => { const i = process.argv.indexOf(n); return i > -1 && process.argv[i + 1] ? Number(process.argv[i + 1]) : def; };
 const DRY = process.argv.includes('--dry');
@@ -77,7 +78,7 @@ async function main() {
   }
 
   const { items, cats, requests, failures, authed, withGap, sec, rate } =
-    await scrapeForsage({ log, limitCats: CATS });
+    await withSiteRetry(() => scrapeForsage({ log, limitCats: CATS }), log);
 
   const row = (it, firstSeen) => [it.code, it.name, it.category, it.priceRetail, it.pricePartner,
     it.retailUsd, it.partnerUsd, it.inStock, firstSeen, ts];

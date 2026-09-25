@@ -4,6 +4,7 @@
 //         node scripts/m112/run.mjs --roots tachskrini,akumulyatori  (только эти разделы)
 import { scrapeCatalog, ROOTS } from './scrape.mjs';
 import { d1, bulkInsert } from './d1.mjs';
+import { withSiteRetry } from './site-retry.mjs';
 
 const args = process.argv.slice(2);
 const DRY = args.includes('--dry');
@@ -32,7 +33,7 @@ async function main() {
 
   // 2. скрап
   log('▸ скрап каталога …');
-  const { products, pages, failed, collapsed } = await scrapeCatalog({ roots, delay: 200, concurrency: 2, log });
+  const { products, pages, failed, collapsed } = await withSiteRetry(() => scrapeCatalog({ roots, delay: 200, concurrency: 2, log }), log);
   log(`  скачано: ${pages} страниц, ${products.length} уникальных товаров${failed ? `, ⚠ выпало страниц: ${failed}` : ''}${collapsed ? `, ⚠ схлопнулось разделов: ${collapsed}` : ''}`);
 
   // 3. diff → upsert только изменившихся (иначе 32k×24 превысят лимит записи D1)

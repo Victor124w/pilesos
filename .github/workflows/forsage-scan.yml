@@ -1,8 +1,9 @@
 name: forsage prices
 
-# Ежечасный снимок цен gsm-forsage.com.ua (розничная + партнёрская) и наличия «є/немає».
+# Снимок цен gsm-forsage.com.ua (розничная + партнёрская) и наличия «є/немає».
+# Раз в 2 часа, 08:30–20:30 Киев — общим слотом с остальными сайтами (с 2026-09-25; до того ежечасно круглосуточно).
 # Расписание НЕ здесь, как и у остальных парсеров: планировщик GitHub тихо роняет запуски.
-# Триггерит Cloudflare-воркер своим ЧАСОВЫМ cron (`0 * * * *`) через workflow_dispatch.
+# Триггерит Cloudflare-воркер общим двухчасовым слотом (`30 5-17/2 * * *`) через workflow_dispatch.
 #
 # ⚠️ Проход идёт ПОД ЛОГИНОМ дилерского кабинета — иначе партнёрских цен не будет.
 # Учётка лежит в Actions Secrets (FORSAGE_EMAIL / FORSAGE_PASSWORD), в коде её нет.
@@ -22,7 +23,7 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

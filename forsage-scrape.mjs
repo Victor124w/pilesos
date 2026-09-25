@@ -36,11 +36,15 @@ export const PAGE = 50;   // потолок сервера, больше не о
 export const CONC = 4;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ⚠️ С 2026-09-23 ~01:00 сайт на POST /graphql отвечает `200` с ПУСТЫМ телом (text/html) —
+// и с раннеров GitHub, и с домашнего IP. GET с тем же запросом отдаёт нормальный JSON.
+// Поэтому ЗАПРОСЫ идут через GET (`?query=`), а вход — через REST (см. login).
+// Мутации GET не принимает, но кроме входа/выхода их у нас нет.
 async function gql(query, token, tries = 3) {
   const headers = token ? { ...BASE_H, Authorization: 'Bearer ' + token } : BASE_H;
   for (let a = 1; a <= tries; a++) {
     try {
-      const r = await fetch(GQL, { method: 'POST', headers, body: JSON.stringify({ query }) });
+      const r = await fetch(GQL + '?query=' + encodeURIComponent(query), { headers });
       const j = await r.json();
       if (j.errors && !j.data) {
         if (a === tries) throw new Error(j.errors[0]?.message || 'GraphQL error');
@@ -56,17 +60,37 @@ async function gql(query, token, tries = 3) {
  * Токен покупателя. Живёт ~час — на один проход хватает с запасом.
  * ⚠️ Пароль берётся ТОЛЬКО из окружения (GitHub Actions Secrets). В коде его нет и быть не должно.
  */
+//
+// Вход — через REST `/rest/V1/integration/customer/token`: мутация `generateCustomerToken`
+// идёт только POST-ом в GraphQL, а его сайт закрыл (2026-09-23). Токен тот же самый
+// токен покупателя Magento, GraphQL его принимает.
 export async function login(email, password) {
-  const q = `mutation{generateCustomerToken(email:${JSON.stringify(email)},password:${JSON.stringify(password)}){token}}`;
-  const j = await gql(q, null);
-  const token = j?.data?.generateCustomerToken?.token;
-  if (!token) throw new Error('Логин не прошёл: ' + (j?.errors?.[0]?.message || 'нет токена'));
-  return token;
+  const r = await fetch(HOST + '/rest/V1/integration/customer/token', {
+    method: 'POST',
+    headers: { 'User-Agent': UA, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ username: email, password }),
+  });
+  const text = await r.text();
+  let body;
+  try { body = JSON.parse(text); } catch { body = null; }
+  // Успех — JSON-строка с токеном; ошибка — объект {message}. Пустой ответ — снова закрыли вход.
+  if (r.ok && typeof body === 'string' && body) return body;
+  const why = body?.message || (text ? text.slice(0, 120) : 'пустой ответ сервера');
+  throw new Error(`Логин не прошёл (REST, HTTP ${r.status}): ${why}`);
 }
 
-/** Отзываем токен после прохода — чтобы он не жил лишний час. */
+/**
+ * Отзыв токена был мутацией `revokeCustomerToken` (только POST — закрыт с 2026-09-23),
+ * а в REST самоотзыва для покупателя нет. Токен просто истекает сам (~час). Функцию
+ * оставляем: попытка безвредна и заработает, если сайт вернёт POST.
+ */
 export async function logout(token) {
-  try { await gql('mutation{revokeCustomerToken{result}}', token, 1); } catch { /* не критично */ }
+  try {
+    await fetch(GQL, {
+      method: 'POST', headers: { ...BASE_H, Authorization: 'Bearer ' + token },
+      body: JSON.stringify({ query: 'mutation{revokeCustomerToken{result}}' }),
+    });
+  } catch { /* не критично */ }
 }
 
 /**
@@ -238,7 +262,10 @@ export async function scrapeForsage({ log = () => {}, conc = CONC, limitCats = 0
   const authed = token ? 1 : 0;
   if (token && withGap < items.length * 0.05) {
     log(`⚠️ ВНИМАНИЕ: под токеном партнёрская цена ниже розничной лишь у ${withGap} из ${items.length}.`);
-    log('   Значит regular_price НЕ хранит розницу — розницу надо снимать отдельным анонимным проходом.');
+    // С 2026-09-25 это ОСТАНОВ, а не предупреждение: каталог идёт GET-ом, и если сайт/кеш
+    // отдаст под токеном розницу, запись дала бы десятки тысяч ложных «подорожаний» в истории.
+    // Норма — ~58% товаров с партнёрской ниже розничной (24 859 из 43 077 на 08.08).
+    throw new Error(`цены кабинета не пришли: партнёрская ниже розничной лишь у ${withGap} из ${items.length} — проход НЕ записан`);
   }
 
   const sec = ((Date.now() - t0) / 1000) | 0;

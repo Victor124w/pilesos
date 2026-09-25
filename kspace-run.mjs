@@ -5,6 +5,7 @@
 //         node kspace-run.mjs --dry   (скрап + diff без записи)
 import { scrapeKspace } from './kspace-scrape.mjs';
 import { d1, bulkInsert } from './d1.mjs';
+import { withSiteRetry } from './site-retry.mjs';
 
 const DRY = process.argv.includes('--dry');
 const log = (...a) => console.error(...a);
@@ -27,7 +28,7 @@ async function main() {
 
   // 2. скрап
   log('▸ скрап каталога …');
-  const { items, requests, pages, failures, mismatch } = await scrapeKspace({ log });
+  const { items, requests, pages, failures, mismatch } = await withSiteRetry(() => scrapeKspace({ log }), log);
 
   // 3. diff — пишем ТОЛЬКО изменившихся (иначе упрёмся в лимит записи D1 100k/сутки)
   const upserts = [], moves = [];

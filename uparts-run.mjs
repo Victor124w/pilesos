@@ -12,6 +12,7 @@
 // env: CF_ACCOUNT_ID, CF_DATABASE_ID, CF_API_TOKEN
 import { scrapeUparts } from './uparts-scrape.mjs';
 import { d1, bulkInsert } from './d1.mjs';
+import { withSiteRetry } from './site-retry.mjs';
 
 const arg = (n, def) => { const i = process.argv.indexOf(n); return i > -1 && process.argv[i + 1] ? Number(process.argv[i + 1]) : def; };
 const DRY = process.argv.includes('--dry');
@@ -38,7 +39,7 @@ async function main() {
   }
 
   const { items, expected, requests, failures, pages, sec, endedClean, inStock } =
-    await scrapeUparts({ log, conc: CONC, limitPages: PAGES });
+    await withSiteRetry(() => scrapeUparts({ log, conc: CONC, limitPages: PAGES }), log);
 
   if (!items.length) throw new Error('скрап не вернул ни одного товара — в базу не пишем');
 

@@ -5,6 +5,7 @@
 //         node ekran-run.mjs --dry   (скрап + diff без записи)
 import { scrapeEkran } from './ekran-scrape.mjs';
 import { d1, bulkInsert } from './d1.mjs';
+import { withSiteRetry } from './site-retry.mjs';
 
 const DRY = process.argv.includes('--dry');
 const log = (...a) => console.error(...a);
@@ -29,7 +30,7 @@ async function main() {
 
   // 2. скрап
   log('▸ скрап каталога …');
-  const { offers, requests, catalogSize, mismatch } = await scrapeEkran({ log, concurrency: 3, delay: 120 });
+  const { offers, requests, catalogSize, mismatch } = await withSiteRetry(() => scrapeEkran({ log, concurrency: 3, delay: 120 }), log);
 
   // 3. diff — пишем ТОЛЬКО изменившихся (иначе упрёмся в лимит записи D1 100k/сутки)
   const upserts = [], moves = [];
