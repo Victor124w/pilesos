@@ -7,7 +7,7 @@ name: forsage prices
 #
 # ⚠️ Проход идёт ПОД ЛОГИНОМ дилерского кабинета — иначе партнёрских цен не будет.
 # Учётка лежит в Actions Secrets (FORSAGE_EMAIL / FORSAGE_PASSWORD), в коде её нет.
-# Токен берётся на проход и отзывается в конце (`revokeCustomerToken`).
+# Токен берётся на проход через REST (с 25.09 — POST /graphql сайт закрыл), истекает сам ~за час.
 on:
   workflow_dispatch:
     inputs:
