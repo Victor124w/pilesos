@@ -1,0 +1,45 @@
+name: remonline scan
+
+# НАШ склад в RemOnline (API RO App) → диффы остатков (ушло/поступило) в D1 + пред-сборка остатков.
+# Расписание НЕ здесь, как и у остальных парсеров: планировщик GitHub тихо роняет плановые
+# запуски. Триггерит Cloudflare-воркер своим cron через workflow_dispatch (общий слот раз в 2 часа).
+#
+# ⚠️ Репозиторий публичный, лог виден всем — скрипты пишут в него только числа.
+# Проход ~41 страница API (~2000 позиций в наличии), по 3 запроса в секунду — ~20–40 с.
+on:
+  workflow_dispatch:
+    inputs:
+      manual:
+        description: 'Ручной запуск'
+        required: false
+        default: 'false'
+
+concurrency:
+  group: remonline-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - run: npm install --no-audit --no-fund
+      - name: Warehouse → D1
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: ${{ secrets.CF_DATABASE_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          RO_TOKEN: ${{ secrets.RO_TOKEN }}
+        run: node remonline-run.mjs
+      - name: Build stock xlsx → Telegram file_id → D1
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_DATABASE_ID: ${{ secrets.CF_DATABASE_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
+        run: node remonline-build-stock.mjs
