@@ -12,7 +12,18 @@ const kyivHour = +new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Kyiv', ho
 if (kyivHour !== 20) { console.log('не последний скан дня (Киев ' + kyivHour + 'ч) — не шлю'); process.exit(0); }
 
 const now = Math.floor(Date.now() / 1000);
-const dayStart = Math.floor(new Date(new Date().toLocaleDateString('en-US', { timeZone: 'Europe/Kyiv' }) + ' 00:00:00 GMT+0300').getTime() / 1000);
+// Начало киевских суток. Смещение берём из часового пояса, а не `GMT+0300`: зимой Киев
+// UTC+2, и жёсткое +3 начинало «сегодня» в 23:00 вчерашнего дня.
+const dayStart = (() => {
+  const kyiv = (t) => Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Kyiv', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+    .formatToParts(new Date(t * 1000)).map((x) => [x.type, +x.value]));
+  // смещение Киева от UTC в момент t, секунд (киевские часы «как UTC» минус t)
+  const off = (t) => { const p = kyiv(t); return Date.UTC(p.year, p.month - 1, p.day, p.hour % 24, p.minute, p.second) / 1000 - t; };
+  const p = kyiv(now);
+  const midnight = Date.UTC(p.year, p.month - 1, p.day) / 1000;
+  // второй проход — смещение на саму полночь: в день перевода часов оно не то, что сейчас
+  return midnight - off(midnight - off(now));
+})();
 const scans = await d1('SELECT started_at,finished_at,products,sales_qty,arrivals_qty FROM m112_scans WHERE started_at>=' + dayStart + ' ORDER BY started_at DESC');
 if (!scans.length) { console.log('нет сканов за сегодня'); process.exit(0); }
 const mx = (await d1('SELECT COALESCE(MAX(products),0) mx FROM m112_scans WHERE started_at>=' + (now - 7 * 86400)))[0].mx;
