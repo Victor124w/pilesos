@@ -17,7 +17,9 @@
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 const HOST = 'https://ukr-mobil.com';
-const GRAPHQL = 'https://admin-new.dashboard-soft.com/graphql';
+// 2026-10: сайт переехал с admin-new.dashboard-soft.com — старый адрес отдаёт 301, а fetch
+// превращает POST в GET без тела, и GraphQL отвечает «Syntax Error: Unexpected <EOF>».
+const GRAPHQL = 'https://admin-ukr-mobile.com.ua/graphql';
 
 // ⚠️ Accept-Language обязателен: без него GraphQL отдаёт АНГЛИЙСКИЕ названия
 // («Apple iPhone 11 display glass» вместо «Скло дисплея Apple iPhone 11»).
