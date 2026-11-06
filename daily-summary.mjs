@@ -4,6 +4,11 @@
 import { d1 } from './d1.mjs';
 import { ADMIN_KEYBOARD } from './admin-keyboard.mjs';
 
+// ⏸ Решение владельца 06.11.2026: «📡 Парсинг m112 — итог дня» админу не слать.
+// Вернуть: true + push в main.
+const NOTIFY = false;
+if (!NOTIFY) { console.log('итог дня: рассылка выключена (NOTIFY=false)'); process.exit(0); }
+
 const chat = process.env.ADMIN_CHAT_ID;
 if (!chat || !process.env.BOT_TOKEN) { console.log('нет CHAT/BOT_TOKEN'); process.exit(0); }
 

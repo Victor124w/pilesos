@@ -12,6 +12,12 @@ const require = createRequire(import.meta.url);
 const XLSX = require('xlsx');
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
+// ⏸ Решение владельца 06.11.2026: админу НЕ слать «📦 Остатки на УТРО/ВЕЧЕР» и вечерний
+// «🔄 Разница реал. сканов». Снимки и файл для кнопки бота «🔄 Разница реал. сканов»
+// собираются как раньше (вечерний файл заливается тихо и удаляется, как дневной).
+// Вернуть рассылку: true + push в main.
+const NOTIFY = false;
+
 const chat = process.env.ADMIN_CHAT_ID, BOT = process.env.BOT_TOKEN;
 if (!chat || !BOT) { console.log('нет CHAT/BOT_TOKEN'); process.exit(0); }
 const now = Math.floor(Date.now() / 1000);
@@ -28,6 +34,7 @@ async function tg(method, body) {
   return (await fetch(`https://api.telegram.org/bot${BOT}/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
 }
 async function sendStockFile(caption) {
+  if (!NOTIFY) { console.log('рассылка выключена (NOTIFY=false), не шлю:', caption); return; }
   const r = (await d1("SELECT v FROM settings WHERE k='m112_stock_fileid'"))[0];
   if (!r) return;
   const fid = JSON.parse(r.v).file_id;
@@ -80,8 +87,8 @@ if (kyivHour === 20) {
   const caption = `🔄 Разница реал. сканов за ${day}: утро → последний скан\n`
     + `изменилось ${changed} · 🛒 продано ${sold} · 📦 поступило ${arr}\n`
     + `✅ сверка с почасовым: ⚠️ расхождений ${diffs} · ℹ️ компенсаций ${comps} — детали и разбивка по складам в файле`;
-  await uploadSnapdiff(frozen, `m112_sverka_${day}.xlsx`, { day, changed, sold, arr, diffs, comps, rich: 1 }, { keep: true, caption });
-  console.log(`вечерний сравнительный отчёт отправлен: изм ${changed}, прод ${sold}, пост ${arr}, расх ${diffs}, комп ${comps}`);
+  await uploadSnapdiff(frozen, `m112_sverka_${day}.xlsx`, { day, changed, sold, arr, diffs, comps, rich: 1 }, { keep: NOTIFY, caption });
+  console.log(`вечерний сравнительный отчёт ${NOTIFY ? 'отправлен' : 'собран (без рассылки)'}: изм ${changed}, прод ${sold}, пост ${arr}, расх ${diffs}, комп ${comps}`);
   await sendStockFile(`📦 Остатки на ВЕЧЕР ${ddmm} (реальный скан): ${prods.length} товаров`);
 } else {
   // ДЕНЬ: быстрый одно-листовой diff «утро → сейчас» → file_id для кнопки (сообщение удаляем).
