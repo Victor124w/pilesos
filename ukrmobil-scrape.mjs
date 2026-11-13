@@ -16,7 +16,8 @@
 // чем на 30 потоках.
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
-const HOST = 'https://ukr-mobil.com';
+// 2026-11-12: сайт переехал на www — без него каждый запрос идёт лишним редиректом 308.
+const HOST = 'https://www.ukr-mobil.com';
 // 2026-10: сайт переехал с admin-new.dashboard-soft.com — старый адрес отдаёт 301, а fetch
 // превращает POST в GET без тела, и GraphQL отвечает «Syntax Error: Unexpected <EOF>».
 const GRAPHQL = 'https://admin-ukr-mobile.com.ua/graphql';
@@ -43,14 +44,43 @@ async function fetchText(url, tries = 3) {
 }
 
 /**
- * buildId Next.js — часть пути JSON-роута, меняется при КАЖДОМ деплое сайта.
- * Хардкодить нельзя: с чужим buildId все карточки отдадут 404.
+ * 2026-11-12: сайт переехал на www.ukr-mobil.com и на Next.js App Router. JSON-роута
+ * `/_next/data/<buildId>/…` и самого buildId больше нет — данные товара теперь вшиты в HTML
+ * карточки RSC-потоком: строки `self.__next_f.push([1,"…"])`. Склеиваем их и достаём объект
+ * `"mainProduct":{"ProductProduct":[…]}` — по составу полей это тот же объект, что раньше лежал
+ * в `pageProps.mainProductData`.
+ *
+ * Объект может быть разрезан между двумя push — поэтому сначала склейка всех строк, потом поиск.
  */
-export async function fetchBuildId() {
-  const html = await fetchText(`${HOST}/uk`);
-  const id = (html.match(/"buildId":"([^"]+)"/) || [])[1];
-  if (!id) throw new Error('buildId не найден на главной — вёрстка сайта поменялась');
-  return id;
+export function extractMainProduct(html) {
+  let flight = '';
+  for (const m of html.matchAll(/self\.__next_f\.push\(\[1,("(?:[^"\\]|\\.)*")\]\)/g)) {
+    try { flight += JSON.parse(m[1]); } catch { /* битая строка — пропускаем */ }
+  }
+  const key = '"mainProduct":';
+  const at = flight.indexOf(key);
+  if (at < 0) return null;
+  const raw = balancedJson(flight, at + key.length);
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+// Вырезает JSON-объект/массив, начинающийся с позиции start, с учётом строк и экранирования.
+function balancedJson(s, start) {
+  if (s[start] !== '{' && s[start] !== '[') return null;
+  let depth = 0, inStr = false;
+  for (let i = start; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (c === '\\') i++;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === '{' || c === '[') depth++;
+    else if (c === '}' || c === ']') { if (--depth === 0) return s.slice(start, i + 1); }
+  }
+  return null;
 }
 
 /**
@@ -65,7 +95,9 @@ export async function fetchBuildId() {
 export async function fetchSlugs() {
   const xml = await fetchText(`${HOST}/sitemap.xml`);
   if (!xml) throw new Error('sitemap.xml не получен');
-  const slugs = [...xml.matchAll(/<loc>https:\/\/ukr-mobil\.com\/shop\/([^<]+)<\/loc>/g)].map((m) => m[1]);
+  const slugs = [...xml.matchAll(/<loc>https:\/\/(?:www\.)?ukr-mobil\.com\/shop\/([^<]+)<\/loc>/g)].map((m) => m[1]);
+  // Пустой список при живом sitemap — сменился формат ссылок; без throw проход молча был бы пустым.
+  if (!slugs.length) throw new Error('в sitemap.xml нет ни одной ссылки /shop/ — формат поменялся');
   return [...new Set(slugs)];
 }
 
@@ -112,44 +144,51 @@ export async function fetchCatalog() {
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
 /**
- * Одна карточка через JSON-роут Next.js (46 КБ против 89 КБ у HTML — вдвое меньше трафика).
+ * Одна карточка: объект `mainProduct` из HTML (см. extractMainProduct, ~150 КБ на карточку).
  *
- * ⚠️ ГЛАВНАЯ ГРАБЛЯ: на неверный slug роут отдаёт не 404, а **200 с пустым pageProps**.
- * Если счесть это за «остаток 0», в базу уедет фантомная продажа. Поэтому отсутствие
- * объекта товара — это СБОЙ (null), а не ноль.
+ * ⚠️ ГЛАВНАЯ ГРАБЛЯ: отсутствие объекта товара — это СБОЙ (null), а не «остаток 0».
+ * Иначе в базу уедет фантомная продажа.
  *
- * Вариант у товаров ровно один (замер: 29 из 29), поэтому берём product_variant_ids[0].
- * Если вариантов вдруг станет больше — суммируем остаток и помечаем, чтобы это было видно.
+ * Возвращает МАССИВ — по товару на каждый вариант. С 2026-11 на сайте есть шаблоны с 2–18
+ * вариантами (филамент по цветам, кабель LEADER красный/чёрный): у каждого варианта свой
+ * `default_code`, свой остаток и цены, все коды есть в каталоге GraphQL. Суммировать нельзя
+ * (у кабелей остаток вариантов совпадает — сумма его удвоит), брать один — теряются остальные коды.
+ *
+ * ⚠️ Остаток не числом (null, строка, RSC-ссылка "$…") — СБОЙ всей карточки, а не 0:
+ * ноль по всем товарам записал бы продажу всего склада одним проходом.
  */
-export function parseCard(json) {
-  const tpl = json?.pageProps?.mainProductData?.ProductProduct?.[0];
+export function parseCard(mainProduct) {
+  const tpl = mainProduct?.ProductProduct?.[0];
   const vars = tpl?.product_variant_ids;
   if (!tpl || !Array.isArray(vars) || !vars.length) return null;
-  const v = vars[0];
-  const code = String(v.default_code || tpl.default_code || '').trim();
-  if (!code) return null;
-  return {
-    code,
-    name: tpl.name || v.display_name || '',
-    qty: num(v.qty_available) ?? 0,
-    qtyVirtual: num(v.virtual_available),
-    incoming: num(v.incoming_qty),
-    priceRetail: num(v.price_retail),
-    priceVip: num(v.price_vip),
-    pricePartner: num(v.price_partner),
-    // «08.08.2026» → дата ближайшего прихода; false, когда прихода не ждут
-    incomingDate: typeof v.last_receipt_scheduled_date === 'string' ? v.last_receipt_scheduled_date : null,
-    variants: vars.length,
-    qtyAll: vars.reduce((s, x) => s + (num(x.qty_available) ?? 0), 0),
-  };
+  const out = [];
+  for (const v of vars) {
+    if (!v || typeof v !== 'object') return null;
+    const qty = num(v.qty_available);
+    if (qty === null) return null;
+    const code = String(v.default_code || (vars.length === 1 ? tpl.default_code : '') || '').trim();
+    if (!code) return null;
+    // display_name варианта: «[10009161] Кабель … (Червоний)» — без кода в скобках.
+    const vName = String(v.display_name || '').replace(/^\[[^\]]*\]\s*/, '');
+    out.push({
+      code,
+      name: vars.length > 1 ? (vName || tpl.name || '') : (tpl.name || vName),
+      qty,
+      qtyVirtual: num(v.virtual_available),
+      incoming: num(v.incoming_qty),
+      priceRetail: num(v.price_retail),
+      priceVip: num(v.price_vip),
+      pricePartner: num(v.price_partner),
+      // «08.08.2026» → дата ближайшего прихода; false, когда прихода не ждут
+      incomingDate: typeof v.last_receipt_scheduled_date === 'string' ? v.last_receipt_scheduled_date : null,
+    });
+  }
+  return out;
 }
 
 /**
- * Полный обход каталога.
- *
- * ⚠️ buildId может смениться ПРЯМО ВО ВРЕМЯ прохода — деплой сайта посреди наших 8 минут
- * реален. Симптом: карточки массово начинают отдавать 404. Поэтому при 404 один раз
- * перечитываем buildId и повторяем; счётчик `rebuilds` виден в логе.
+ * Полный обход каталога. На каждую карточку до 3 попыток; не отдавшая товар — `failures`
+ * (не ответила / 404) или `empty` (200, но объекта товара в странице нет).
  */
 export async function scrapeUkrmobil({ log = () => {}, conc = CONC, limit = 0 } = {}) {
   const t0 = Date.now();
@@ -164,36 +203,27 @@ export async function scrapeUkrmobil({ log = () => {}, conc = CONC, limit = 0 } 
   log(`  ${slugs.length} карточек`);
   if (limit) slugs = slugs.slice(0, limit);
 
-  let buildId = await fetchBuildId();
-  log(`▸ buildId ${buildId}`);
   log(`▸ обход карточек, потоков ${conc} …`);
 
   const items = [];
-  let done = 0, failures = 0, empty = 0, rebuilds = 0, multi = 0;
+  let done = 0, failures = 0, empty = 0, multi = 0, dup = 0;
   let idx = 0;
+  const seen = new Set();
 
   const one = async (slug) => {
     for (let attempt = 1; attempt <= 3; attempt++) {
       let status = 0, txt = '';
       try {
-        const r = await fetch(`${HOST}/_next/data/${buildId}/uk/shop/${slug}.json`, { headers: H });
+        const r = await fetch(`${HOST}/shop/${slug}`, { headers: H });
         status = r.status;
         txt = await r.text();
       } catch { /* сеть — уходим в ретрай */ }
 
       if (status === 200 && txt) {
-        let parsed = null;
-        try { parsed = parseCard(JSON.parse(txt)); } catch { /* битый JSON — ретрай */ }
+        const parsed = parseCard(extractMainProduct(txt));
         if (parsed) return parsed;
-        // 200 с пустым pageProps — устаревший slug либо сменившийся buildId
+        // 200 без объекта товара — вёрстка поменялась либо отдали заглушку
         if (attempt === 3) { empty++; return null; }
-      }
-
-      // Массовые 404 = сайт задеплоился, buildId протух. Перечитываем ОДИН раз.
-      if (status === 404 && rebuilds < 3) {
-        rebuilds++;
-        const fresh = await fetchBuildId().catch(() => null);
-        if (fresh && fresh !== buildId) { buildId = fresh; log(`  ⚠️ buildId сменился на ${fresh} — сайт задеплоился во время прохода`); }
       }
       if (attempt === 3) { failures++; return null; }
       await sleep(300 * attempt);
@@ -206,11 +236,15 @@ export async function scrapeUkrmobil({ log = () => {}, conc = CONC, limit = 0 } 
       const k = idx++;
       if (k >= slugs.length) return;
       const slug = slugs[k];
-      const it = await one(slug);
+      const vars = await one(slug);
       done++;
       if (done % 200 === 0) log(`  ${done}/${slugs.length} … ${((Date.now() - t0) / 1000) | 0}с`);
-      if (!it) continue;
-      if (it.variants > 1) multi++;
+      if (!vars) continue;
+      if (vars.length > 1) multi++;
+      for (const it of vars) {
+      // Один код мог прийти с двух карточек (sitemap с языковыми/старыми slug) — берём первый.
+      if (seen.has(it.code)) { dup++; continue; }
+      seen.add(it.code);
       const c = catalog.get(it.code);
       items.push({
         code: it.code,
@@ -222,19 +256,28 @@ export async function scrapeUkrmobil({ log = () => {}, conc = CONC, limit = 0 } 
         priceRetail: it.priceRetail ?? c?.priceRetail ?? null,
         priceVip: it.priceVip ?? c?.priceVip ?? null,
         pricePartner: it.pricePartner ?? c?.pricePartner ?? null,
-        qty: it.variants > 1 ? it.qtyAll : it.qty,
+        qty: it.qty,
         qtyVirtual: it.qtyVirtual,
         incoming: it.incoming,
         incomingDate: it.incomingDate,
       });
+      }
     }
   }));
 
   const sec = ((Date.now() - t0) / 1000) | 0;
   if (failures) log(`  ⚠️ карточек не удалось получить: ${failures}`);
   if (empty) log(`  ⚠️ карточек с пустым ответом (устаревший slug): ${empty}`);
-  if (multi) log(`  ⚠️ товаров с несколькими вариантами: ${multi} — остаток просуммирован, проверить схему`);
-  log(`  готово: ${items.length} товаров за ${sec}с (${(items.length / Math.max(sec, 1)).toFixed(2)} req/s)`);
+  if (multi) log(`  ℹ️ карточек с несколькими вариантами: ${multi} — каждый вариант пишется своим кодом`);
+  if (dup) log(`  ℹ️ повторов кода с разных карточек: ${dup} — взят первый`);
+  log(`  готово: ${items.length} товаров с ${slugs.length} карточек за ${sec}с (${(slugs.length / Math.max(sec, 1)).toFixed(2)} карт/с)`);
 
-  return { items, catalog, requests: slugs.length, failures, empty, rebuilds, multi, sec };
+  // Ни одна карточка не разобралась — падаем громко (письмо от GitHub), а не пишем пустой проход.
+  // Больше сетевых сбоев, чем пустых страниц — это сеть (слово «network» включает разовый
+  // повтор в site-retry.mjs); иначе сайт ответил, а разбор не сработал — поменялась вёрстка.
+  if (!items.length) {
+    if (failures > empty) throw new Error(`network: ни одна из ${slugs.length} карточек не ответила (сбоев ${failures})`);
+    throw new Error(`ни одна из ${slugs.length} карточек не разобрана (без объекта товара ${empty}, сбоев ${failures}) — вёрстка сайта поменялась`);
+  }
+  return { items, catalog, requests: slugs.length, failures, empty, multi, sec };
 }

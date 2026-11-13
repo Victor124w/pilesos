@@ -36,7 +36,7 @@ async function main() {
   }
 
   // 2. скрап
-  const { items, requests, failures, empty, rebuilds, multi, sec } =
+  const { items, requests, failures, empty, multi, sec } =
     await withSiteRetry(() => scrapeUkrmobil({ log, conc: CONCURRENCY, limit: LIMIT }), log);
 
   // 3. diff — пишем ТОЛЬКО изменившихся (иначе упрёмся в лимит записи D1 100k/сутки)
@@ -107,8 +107,7 @@ async function main() {
     [ts, Math.floor(Date.now() / 1000), requests, items.length, changed,
       salesQty, arrivalsQty, failures + empty, missing, 1]);
 
-  if (rebuilds) log(`  ⚠️ buildId перечитывался ${rebuilds} раз — сайт деплоился во время прохода`);
-  if (multi) log(`  ⚠️ многовариантных товаров ${multi} — остаток просуммирован`);
+  if (multi) log(`  ℹ️ многовариантных товаров ${multi} — остаток взят по коду товара`);
   log(`✓ готово за ${((Date.now() - t0) / 1000) | 0}с: товаров ${items.length}, движений ${moves.length}`);
 }
 
